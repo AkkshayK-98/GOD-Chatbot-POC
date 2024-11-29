@@ -1,11 +1,11 @@
 import os
-import json
 import base64
 import tempfile
 import streamlit as st
-import vertexai
+from vertexai import init
 from vertexai.preview.generative_models import GenerativeModel, SafetySetting, Tool
 from vertexai.preview.generative_models import grounding
+import time
 
 # Function to configure Google Cloud credentials from environment variable
 def configure_google_credentials():
@@ -13,20 +13,15 @@ def configure_google_credentials():
     if not encoded_creds:
         raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_BASE64 environment variable is not set.")
     
-    # Decode the base64 string to get the original JSON credentials
     creds_json = base64.b64decode(encoded_creds).decode('utf-8')
-    
-    # Write the credentials JSON to a temporary file
     temp_creds_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
     with open(temp_creds_file.name, "w") as f:
         f.write(creds_json)
-
-    # Set the GOOGLE_APPLICATION_CREDENTIALS environment variable to the file path
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_creds_file.name
 
 # Function to initialize the chat model
 def initialize_chat_model():
-    vertexai.init(project="god-chatbot-poc", location="us-central1")
+    init(project="god-chatbot-poc", location="us-central1")
     tools = [
         Tool.from_retrieval(
             retrieval=grounding.Retrieval(
@@ -44,54 +39,78 @@ You DO NOT know anything other than this context. Under no circumstances are you
     )
     return model.start_chat()
 
-# Streamlit UI for chatbot
+# Streamlit chatbot UI
 def chat_ui():
-    st.title("Maha Mantra Chatbot")
+    # Initialize session state for chat history and model
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []  # Chat history
+    if "chat" not in st.session_state:
+        configure_google_credentials()  # Configure Google credentials
+        st.session_state["chat"] = initialize_chat_model()  # Initialize chat session
 
-    user_input = st.text_input("Ask a question:")
-    if st.button("Send") and user_input:
-        try:
-            # Call the credentials setup function
-            configure_google_credentials()
+    st.title("GOD Chatbot - POC")
+    st.markdown("Ask your questions about the Mahamantra below!")
 
-            # Initialize chat session
-            chat = initialize_chat_model()
+    # Chat messages display
+    for message in st.session_state["chat_history"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-            # Send user message to the chat model and get response
-            generation_config = {
-                "max_output_tokens": 8192,
-                "temperature": 1,
-                "top_p": 0.95,
-            }
-            safety_settings = [
-                SafetySetting(
-                    category=SafetySetting.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=SafetySetting.HarmBlockThreshold.OFF
-                ),
-                SafetySetting(
-                    category=SafetySetting.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=SafetySetting.HarmBlockThreshold.OFF
-                ),
-                SafetySetting(
-                    category=SafetySetting.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=SafetySetting.HarmBlockThreshold.OFF
-                ),
-                SafetySetting(
-                    category=SafetySetting.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=SafetySetting.HarmBlockThreshold.OFF
-                ),
-            ]
-            response = chat.send_message(
-                [user_input],
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            bot_response = response.candidates[0].content.parts[0].text
-            st.write(f"Chatbot: {bot_response}")
+    # User input section
+    if user_input := st.chat_input("Type your question here..."):
+        # Add user input to chat history
+        st.session_state["chat_history"].append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+        # Generate bot response
+        with st.chat_message("bot"):
+            placeholder = st.empty()
+            bot_response = generate_streaming_response(st.session_state["chat"], user_input, placeholder)
 
-# Run the Streamlit UI
+        # Add bot response to chat history
+        st.session_state["chat_history"].append({"role": "bot", "content": bot_response})
+
+# Stream the bot's response incrementally
+def generate_streaming_response(chat, user_input, placeholder):
+    generation_config = {
+        "max_output_tokens": 8192,
+        "temperature": 1,
+        "top_p": 0.95,
+    }
+    safety_settings = [
+        SafetySetting(
+            category=SafetySetting.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=SafetySetting.HarmBlockThreshold.OFF
+        ),
+        SafetySetting(
+            category=SafetySetting.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=SafetySetting.HarmBlockThreshold.OFF
+        ),
+        SafetySetting(
+            category=SafetySetting.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=SafetySetting.HarmBlockThreshold.OFF
+        ),
+        SafetySetting(
+            category=SafetySetting.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=SafetySetting.HarmBlockThreshold.OFF
+        ),
+    ]
+    response = chat.send_message(
+        [user_input],
+        generation_config=generation_config,
+        safety_settings=safety_settings
+    )
+    bot_response_parts = response.candidates[0].content.parts
+
+    # Stream response dynamically
+    full_response = ""
+    for part in bot_response_parts:
+        full_response += part.text
+        placeholder.markdown(full_response)  # Update the bot response placeholder
+        time.sleep(0.1)  # Simulate streaming delay for effect
+    return full_response
+
+# Run the Streamlit app
 if __name__ == "__main__":
     chat_ui()
