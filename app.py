@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import tempfile
 import streamlit as st
 import vertexai
@@ -8,14 +9,17 @@ from vertexai.preview.generative_models import grounding
 
 # Function to configure Google Cloud credentials from environment variable
 def configure_google_credentials():
-    creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set.")
+    encoded_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64")
+    if not encoded_creds:
+        raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_BASE64 environment variable is not set.")
+    
+    # Decode the base64 string to get the original JSON credentials
+    creds_json = base64.b64decode(encoded_creds).decode('utf-8')
     
     # Write the credentials JSON to a temporary file
     temp_creds_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-    temp_creds_file.write(creds_json.encode())
-    temp_creds_file.close()
+    with open(temp_creds_file.name, "w") as f:
+        f.write(creds_json)
 
     # Set the GOOGLE_APPLICATION_CREDENTIALS environment variable to the file path
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_creds_file.name
